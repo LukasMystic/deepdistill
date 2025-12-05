@@ -4,7 +4,6 @@ import io
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
-import requests
 
 # --- 1. ENV VARS SETUP ---
 from dotenv import load_dotenv
@@ -56,14 +55,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-# --- EMAIL CONFIGURATION (RESEND + SMTP FALLBACK) ---
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000") # Important for Hugging Face
-
-# SMTP Config (Legacy/Render)
+# --- EMAIL CONFIGURATION ---
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
-MAIL_FROM = os.getenv("MAIL_FROM") # Optional override
+MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME)
 MAIL_PORT = int(os.getenv("MAIL_PORT", 587))
 MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
 
@@ -72,7 +67,7 @@ if MAIL_USERNAME and MAIL_PASSWORD and FastMail:
     mail_conf = ConnectionConfig(
         MAIL_USERNAME=MAIL_USERNAME,
         MAIL_PASSWORD=MAIL_PASSWORD,
-        MAIL_FROM=MAIL_FROM or MAIL_USERNAME,
+        MAIL_FROM=MAIL_FROM,
         MAIL_PORT=MAIL_PORT,
         MAIL_SERVER=MAIL_SERVER,
         MAIL_STARTTLS=True,
@@ -80,63 +75,6 @@ if MAIL_USERNAME and MAIL_PASSWORD and FastMail:
         USE_CREDENTIALS=True,
         VALIDATE_CERTS=True
     )
-
-# --- RESEND EMAIL HELPER (HTTP) ---
-def send_email_via_resend(to_email: str, subject: str, html_body: str):
-    """Sends email via Resend HTTP API to bypass SMTP blocking."""
-    if not RESEND_API_KEY:
-        print("❌ Resend API Key missing.")
-        return
-
-    # 1. Standard Fallback Sender (Guaranteed to work on Free Tier)
-    fallback_sender = "DeepDistill <onboarding@resend.dev>"
-    
-    # 2. Check for Public Domains (Gmail, Yahoo, etc.)
-    # Resend strictly forbids sending FROM these domains.
-    public_domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com", "icloud.com"]
-    current_sender = MAIL_FROM if MAIL_FROM else fallback_sender
-    
-    is_public = any(domain in current_sender.lower() for domain in public_domains)
-    
-    if is_public:
-        print(f"⚠️ Warning: MAIL_FROM is set to '{current_sender}'.")
-        print("   Resend does not allow sending FROM public domains (Gmail, Yahoo, etc).")
-        print(f"   Switching sender to '{fallback_sender}' to ensure delivery.")
-        current_sender = fallback_sender
-    
-    try:
-        print(f"📧 Attempting Resend to: {to_email} from {current_sender}")
-        
-        payload = {
-            "from": current_sender,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_body
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
-        
-        # 3. Retry Logic for 403 Forbidden (Domain Verification Issues)
-        # If we tried a custom domain and it failed, fallback to onboarding@resend.dev
-        if response.status_code == 403 and current_sender != fallback_sender:
-             print(f"⚠️ Resend rejected custom sender '{current_sender}' (Domain not verified).")
-             print(f"🔄 Retrying with safe default: {fallback_sender}...")
-             payload["from"] = fallback_sender
-             response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
-
-        # Check for errors explicitly to print the message
-        if not response.ok:
-            print(f"❌ Resend API Error ({response.status_code}): {response.text}")
-        
-        response.raise_for_status()
-        print(f"✅ Email sent via Resend to {to_email}")
-    except Exception as e:
-        print(f"❌ Resend Failed: {e}")
 
 # --- MOCK DATABASE (In-Memory) ---
 MOCK_USERS: Dict[str, dict] = {} 
@@ -379,22 +317,18 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
         MOCK_USERS[user_data.email] = new_user
         user_response = UserResponse(**new_user)
 
-    # SEND EMAIL (Resend Logic Added)
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    verify_link = f"{frontend_url}/verify?token={verification_token}"
-    
-    html = f"""
-    <p>Welcome to DeepDistill, {user_data.full_name}!</p>
-    <p>Please verify your email within 24 hours.</p>
-    <a href="{verify_link}" style="padding: 10px 20px; background-color: blue; color: white; text-decoration: none;">Verify Email</a>
-    """
-    
-    if RESEND_API_KEY:
-        # Preferred Method for Hugging Face Spaces
-        background_tasks.add_task(send_email_via_resend, user_data.email, "Verify your DeepDistill Account", html)
-    elif mail_conf and FastMail:
-        # Fallback to SMTP
+    # SEND EMAIL
+    if mail_conf and FastMail:
         try:
+            frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+            verify_link = f"{frontend_url}/verify?token={verification_token}"
+            
+            html = f"""
+            <p>Welcome to DeepDistill, {user_data.full_name}!</p>
+            <p>Please verify your email within 24 hours.</p>
+            <a href="{verify_link}" style="padding: 10px 20px; background-color: blue; color: white; text-decoration: none;">Verify Email</a>
+            """
+            
             message = MessageSchema(
                 subject="Verify your DeepDistill Account",
                 recipients=[user_data.email],
@@ -403,12 +337,11 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
             )
             fm = FastMail(mail_conf)
             background_tasks.add_task(fm.send_message, message)
-            print(f"📧 SMTP Email task added for {user_data.email}")
+            print(f"📧 Email task added for {user_data.email}")
         except Exception as e:
-            print(f"❌ SMTP Email Failed: {e}")
+            print(f"❌ Email Failed: {e}")
     else:
-        # Mock for Dev
-        print(f"=== MOCK VERIFY LINK: {verify_link} ===")
+        print(f"=== MOCK VERIFY LINK: http://localhost:3000/verify?token={verification_token} ===")
 
     access_token = create_access_token(data={"sub": user_data.email})
     return {"access_token": access_token, "token_type": "bearer", "user": user_response}
@@ -481,24 +414,18 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
             MOCK_USERS[email]["reset_token"] = reset_token
             MOCK_USERS[email]["reset_token_exp"] = datetime.utcnow() + timedelta(hours=1)
 
-        # Prepare Email Content
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
-        
-        html = f"""
-        <p>You requested a password reset.</p>
-        <p>Click the button below to reset your password (valid for 1 hour):</p>
-        <a href="{reset_link}" style="padding: 10px 20px; background-color: red; color: white; text-decoration: none;">Reset Password</a>
-        <p>If you didn't ask for this, ignore this email.</p>
-        """
-
-        # SEND EMAIL (Resend Priority)
-        if RESEND_API_KEY:
-            background_tasks.add_task(send_email_via_resend, email, "Reset Your DeepDistill Password", html)
-            return {"message": "Reset email sent via Resend."}
-            
-        elif mail_conf and FastMail:
+        # Send Email
+        if mail_conf and FastMail:
             try:
+                frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+                reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
+                
+                html = f"""
+                <p>You requested a password reset.</p>
+                <p>Click the button below to reset your password (valid for 1 hour):</p>
+                <a href="{reset_link}" style="padding: 10px 20px; background-color: red; color: white; text-decoration: none;">Reset Password</a>
+                <p>If you didn't ask for this, ignore this email.</p>
+                """
                 message = MessageSchema(
                     subject="Reset Your DeepDistill Password",
                     recipients=[email],
@@ -507,12 +434,12 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
                 )
                 fm = FastMail(mail_conf)
                 background_tasks.add_task(fm.send_message, message)
-                return {"message": "Reset email sent via SMTP."}
+                return {"message": "Reset email sent."}
             except Exception as e:
                 print(f"Email Error: {e}")
                 raise HTTPException(500, "Error sending email")
         else:
-             print(f"=== MOCK RESET LINK: {reset_link} ===")
+             print(f"=== MOCK RESET LINK: http://localhost:3000/reset-password?token={reset_token} ===")
 
     # Always return success to prevent email enumeration
     return {"message": "If that email exists, we sent a reset link."}
