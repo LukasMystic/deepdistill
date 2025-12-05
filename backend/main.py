@@ -88,28 +88,47 @@ def send_email_via_resend(to_email: str, subject: str, html_body: str):
         print("❌ Resend API Key missing.")
         return
 
+    # 1. Standard Fallback Sender (Guaranteed to work on Free Tier)
+    fallback_sender = "DeepDistill <onboarding@resend.dev>"
+    
+    # 2. Check for Public Domains (Gmail, Yahoo, etc.)
+    # Resend strictly forbids sending FROM these domains.
+    public_domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com", "icloud.com"]
+    current_sender = MAIL_FROM if MAIL_FROM else fallback_sender
+    
+    is_public = any(domain in current_sender.lower() for domain in public_domains)
+    
+    if is_public:
+        print(f"⚠️ Warning: MAIL_FROM is set to '{current_sender}'.")
+        print("   Resend does not allow sending FROM public domains (Gmail, Yahoo, etc).")
+        print(f"   Switching sender to '{fallback_sender}' to ensure delivery.")
+        current_sender = fallback_sender
+    
     try:
-        # Default to onboarding@resend.dev (Required for free tier without domain)
-        # But allow override via MAIL_FROM if the user has verified a domain.
-        default_sender = "DeepDistill <onboarding@resend.dev>"
-        from_email = MAIL_FROM if MAIL_FROM else default_sender
+        print(f"📧 Attempting Resend to: {to_email} from {current_sender}")
         
-        print(f"📧 Attempting Resend to: {to_email} from {from_email}")
+        payload = {
+            "from": current_sender,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        }
 
-        response = requests.post(
-            "https://api.resend.com/emails",
-            json={
-                "from": from_email,
-                "to": [to_email],
-                "subject": subject,
-                "html": html_body
-            },
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json"
-            }
-        )
+        response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
         
+        # 3. Retry Logic for 403 Forbidden (Domain Verification Issues)
+        # If we tried a custom domain and it failed, fallback to onboarding@resend.dev
+        if response.status_code == 403 and current_sender != fallback_sender:
+             print(f"⚠️ Resend rejected custom sender '{current_sender}' (Domain not verified).")
+             print(f"🔄 Retrying with safe default: {fallback_sender}...")
+             payload["from"] = fallback_sender
+             response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
+
         # Check for errors explicitly to print the message
         if not response.ok:
             print(f"❌ Resend API Error ({response.status_code}): {response.text}")
