@@ -63,7 +63,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000") # Important fo
 # SMTP Config (Legacy/Render)
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
-MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME or "onboarding@resend.dev")
+MAIL_FROM = os.getenv("MAIL_FROM") # Optional override
 MAIL_PORT = int(os.getenv("MAIL_PORT", 587))
 MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
 
@@ -72,7 +72,7 @@ if MAIL_USERNAME and MAIL_PASSWORD and FastMail:
     mail_conf = ConnectionConfig(
         MAIL_USERNAME=MAIL_USERNAME,
         MAIL_PASSWORD=MAIL_PASSWORD,
-        MAIL_FROM=MAIL_FROM,
+        MAIL_FROM=MAIL_FROM or MAIL_USERNAME,
         MAIL_PORT=MAIL_PORT,
         MAIL_SERVER=MAIL_SERVER,
         MAIL_STARTTLS=True,
@@ -89,9 +89,13 @@ def send_email_via_resend(to_email: str, subject: str, html_body: str):
         return
 
     try:
-        # If you haven't verified a domain on Resend, you MUST use onboarding@resend.dev
-        from_email = "DeepDistill <onboarding@resend.dev>" 
+        # Default to onboarding@resend.dev (Required for free tier without domain)
+        # But allow override via MAIL_FROM if the user has verified a domain.
+        default_sender = "DeepDistill <onboarding@resend.dev>"
+        from_email = MAIL_FROM if MAIL_FROM else default_sender
         
+        print(f"📧 Attempting Resend to: {to_email} from {from_email}")
+
         response = requests.post(
             "https://api.resend.com/emails",
             json={
@@ -105,6 +109,11 @@ def send_email_via_resend(to_email: str, subject: str, html_body: str):
                 "Content-Type": "application/json"
             }
         )
+        
+        # Check for errors explicitly to print the message
+        if not response.ok:
+            print(f"❌ Resend API Error ({response.status_code}): {response.text}")
+        
         response.raise_for_status()
         print(f"✅ Email sent via Resend to {to_email}")
     except Exception as e:
