@@ -4,6 +4,7 @@ import io
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
+import requests
 
 # --- 1. ENV VARS SETUP ---
 from dotenv import load_dotenv
@@ -55,10 +56,14 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-# --- EMAIL CONFIGURATION ---
+# --- EMAIL CONFIGURATION (RESEND + SMTP FALLBACK) ---
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000") # Important for Hugging Face
+
+# SMTP Config (Legacy/Render)
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
-MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME)
+MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME or "onboarding@resend.dev")
 MAIL_PORT = int(os.getenv("MAIL_PORT", 587))
 MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
 
@@ -75,6 +80,35 @@ if MAIL_USERNAME and MAIL_PASSWORD and FastMail:
         USE_CREDENTIALS=True,
         VALIDATE_CERTS=True
     )
+
+# --- RESEND EMAIL HELPER (HTTP) ---
+def send_email_via_resend(to_email: str, subject: str, html_body: str):
+    """Sends email via Resend HTTP API to bypass SMTP blocking."""
+    if not RESEND_API_KEY:
+        print("❌ Resend API Key missing.")
+        return
+
+    try:
+        # If you haven't verified a domain on Resend, you MUST use onboarding@resend.dev
+        from_email = "DeepDistill <onboarding@resend.dev>" 
+        
+        response = requests.post(
+            "https://api.resend.com/emails",
+            json={
+                "from": from_email,
+                "to": [to_email],
+                "subject": subject,
+                "html": html_body
+            },
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            }
+        )
+        response.raise_for_status()
+        print(f"✅ Email sent via Resend to {to_email}")
+    except Exception as e:
+        print(f"❌ Resend Failed: {e}")
 
 # --- MOCK DATABASE (In-Memory) ---
 MOCK_USERS: Dict[str, dict] = {} 
@@ -317,18 +351,22 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
         MOCK_USERS[user_data.email] = new_user
         user_response = UserResponse(**new_user)
 
-    # SEND EMAIL
-    if mail_conf and FastMail:
+    # SEND EMAIL (Resend Logic Added)
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    verify_link = f"{frontend_url}/verify?token={verification_token}"
+    
+    html = f"""
+    <p>Welcome to DeepDistill, {user_data.full_name}!</p>
+    <p>Please verify your email within 24 hours.</p>
+    <a href="{verify_link}" style="padding: 10px 20px; background-color: blue; color: white; text-decoration: none;">Verify Email</a>
+    """
+    
+    if RESEND_API_KEY:
+        # Preferred Method for Hugging Face Spaces
+        background_tasks.add_task(send_email_via_resend, user_data.email, "Verify your DeepDistill Account", html)
+    elif mail_conf and FastMail:
+        # Fallback to SMTP
         try:
-            frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-            verify_link = f"{frontend_url}/verify?token={verification_token}"
-            
-            html = f"""
-            <p>Welcome to DeepDistill, {user_data.full_name}!</p>
-            <p>Please verify your email within 24 hours.</p>
-            <a href="{verify_link}" style="padding: 10px 20px; background-color: blue; color: white; text-decoration: none;">Verify Email</a>
-            """
-            
             message = MessageSchema(
                 subject="Verify your DeepDistill Account",
                 recipients=[user_data.email],
@@ -337,11 +375,12 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
             )
             fm = FastMail(mail_conf)
             background_tasks.add_task(fm.send_message, message)
-            print(f"📧 Email task added for {user_data.email}")
+            print(f"📧 SMTP Email task added for {user_data.email}")
         except Exception as e:
-            print(f"❌ Email Failed: {e}")
+            print(f"❌ SMTP Email Failed: {e}")
     else:
-        print(f"=== MOCK VERIFY LINK: http://localhost:3000/verify?token={verification_token} ===")
+        # Mock for Dev
+        print(f"=== MOCK VERIFY LINK: {verify_link} ===")
 
     access_token = create_access_token(data={"sub": user_data.email})
     return {"access_token": access_token, "token_type": "bearer", "user": user_response}
@@ -414,18 +453,24 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
             MOCK_USERS[email]["reset_token"] = reset_token
             MOCK_USERS[email]["reset_token_exp"] = datetime.utcnow() + timedelta(hours=1)
 
-        # Send Email
-        if mail_conf and FastMail:
+        # Prepare Email Content
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
+        
+        html = f"""
+        <p>You requested a password reset.</p>
+        <p>Click the button below to reset your password (valid for 1 hour):</p>
+        <a href="{reset_link}" style="padding: 10px 20px; background-color: red; color: white; text-decoration: none;">Reset Password</a>
+        <p>If you didn't ask for this, ignore this email.</p>
+        """
+
+        # SEND EMAIL (Resend Priority)
+        if RESEND_API_KEY:
+            background_tasks.add_task(send_email_via_resend, email, "Reset Your DeepDistill Password", html)
+            return {"message": "Reset email sent via Resend."}
+            
+        elif mail_conf and FastMail:
             try:
-                frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-                reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
-                
-                html = f"""
-                <p>You requested a password reset.</p>
-                <p>Click the button below to reset your password (valid for 1 hour):</p>
-                <a href="{reset_link}" style="padding: 10px 20px; background-color: red; color: white; text-decoration: none;">Reset Password</a>
-                <p>If you didn't ask for this, ignore this email.</p>
-                """
                 message = MessageSchema(
                     subject="Reset Your DeepDistill Password",
                     recipients=[email],
@@ -434,12 +479,12 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
                 )
                 fm = FastMail(mail_conf)
                 background_tasks.add_task(fm.send_message, message)
-                return {"message": "Reset email sent."}
+                return {"message": "Reset email sent via SMTP."}
             except Exception as e:
                 print(f"Email Error: {e}")
                 raise HTTPException(500, "Error sending email")
         else:
-             print(f"=== MOCK RESET LINK: http://localhost:3000/reset-password?token={reset_token} ===")
+             print(f"=== MOCK RESET LINK: {reset_link} ===")
 
     # Always return success to prevent email enumeration
     return {"message": "If that email exists, we sent a reset link."}

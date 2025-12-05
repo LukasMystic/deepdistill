@@ -18,3 +18,4 @@ passlib[argon2]==1.7.4
 fastapi-mail==1.4.1
 argon2-cffi>=21.3.0
 dnspython>=2.3.0
+requests
