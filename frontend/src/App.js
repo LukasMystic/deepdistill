@@ -737,7 +737,7 @@ const AnalyticsView = () => {
                 <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: '#f8fafc' }} />
                 <Legend verticalAlign="top" height={36} iconType="circle" />
                 <Area name="AKTP Student" type="monotone" dataKey="aktp" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorAKTP)" />
-                <Area name="Vanilla Student" type="monotone" dataKey="vanilla" stroke="#94a3b8" strokeWidth={2} fillOpacity={0} strokeDasharray="5 5" />
+                <Area name="Vanilla Distill" type="monotone" dataKey="vanilla" stroke="#94a3b8" strokeWidth={2} fillOpacity={0} strokeDasharray="5 5" />
                 <Area name="Baseline B0" type="monotone" dataKey="baseline" stroke="#ef4444" strokeWidth={2} fillOpacity={0} />
               </AreaChart>
             </ResponsiveContainer>
