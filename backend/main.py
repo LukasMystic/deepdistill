@@ -82,6 +82,10 @@ MAIL_API_KEY = os.getenv("MAIL_PASSWORD") # Reuse the Brevo Key (xkeysib-...)
 MAIL_SENDER_EMAIL = os.getenv("MAIL_FROM", "noreply@deepdistill.app")
 MAIL_SENDER_NAME = "DeepDistill Admin"
 
+# --- FRONTEND URL CONFIGURATION ---
+# Default to Hugging Face Space URL if not set
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://huggingface.co/spaces/bembeng123")
+
 # --- MOCK DATABASE (In-Memory) ---
 MOCK_USERS: Dict[str, dict] = {} 
 MOCK_HISTORY: List[dict] = []
@@ -500,8 +504,8 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
 
     # SEND EMAIL (API WRAPPER)
     try:
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        verify_link = f"{frontend_url}/verify?token={verification_token}"
+        # Use FRONTEND_URL environment variable to construct link
+        verify_link = f"{FRONTEND_URL}/verify?token={verification_token}"
         
         html = f"""
         <p>Welcome to DeepDistill, {user_data.full_name}!</p>
@@ -580,8 +584,8 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
             MOCK_USERS[email]["reset_token_exp"] = datetime.utcnow() + timedelta(hours=1)
 
         try:
-            frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-            reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
+            # Use FRONTEND_URL environment variable to construct link
+            reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}" 
             html = f"<p>Click here to reset your password: <a href='{reset_link}'>Reset Password</a></p>"
             
             background_tasks.add_task(
