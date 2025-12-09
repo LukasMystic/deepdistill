@@ -737,7 +737,7 @@ const AnalyticsView = () => {
                 <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: '#f8fafc' }} />
                 <Legend verticalAlign="top" height={36} iconType="circle" />
                 <Area name="AKTP Student" type="monotone" dataKey="aktp" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorAKTP)" />
-                <Area name="Vanilla Distill" type="monotone" dataKey="vanilla" stroke="#94a3b8" strokeWidth={2} fillOpacity={0} strokeDasharray="5 5" />
+                <Area name="Vanilla Student" type="monotone" dataKey="vanilla" stroke="#94a3b8" strokeWidth={2} fillOpacity={0} strokeDasharray="5 5" />
                 <Area name="Baseline B0" type="monotone" dataKey="baseline" stroke="#ef4444" strokeWidth={2} fillOpacity={0} />
               </AreaChart>
             </ResponsiveContainer>
@@ -888,14 +888,50 @@ function App() {
   const [formData, setFormData] = useState({ email: '', password: '', full_name: '' });
   const [authError, setAuthError] = useState(null);
   const [authSuccess, setAuthSuccess] = useState(null);
+  
+  // Guard ref to prevent double execution in Strict Mode
+  const dataFetchRef = useRef(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
     const path = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
     
+    // --- HANDLE EMAIL VERIFICATION ---
+    if (path === '/verify') {
+      const tokenParam = params.get('token');
+      if (tokenParam) {
+        // Prevent double execution
+        if (dataFetchRef.current) return;
+        dataFetchRef.current = true;
+
+        setLoadingUser(true);
+        // Call backend to verify
+        const formData = new URLSearchParams();
+        formData.append('token', tokenParam);
+        
+        fetch('/auth/verify', { method: 'POST', body: formData })
+          .then(async res => {
+             const data = await res.json();
+             if (!res.ok) throw new Error(data.detail || "Verification failed");
+             setAuthSuccess("Email verified successfully! Please log in.");
+             setAuthError(null); // Clear any potential error
+             setAuthMode('login');
+             setView('auth');
+          })
+          .catch(err => {
+             setAuthError(err.message || "Invalid or expired verification link.");
+             setAuthSuccess(null); // Clear any potential success
+             setAuthMode('login');
+             setView('auth');
+          })
+          .finally(() => setLoadingUser(false));
+        return; 
+      }
+    }
+
     // Check if we are on the reset password page
     if (path === '/reset-password') {
-      const params = new URLSearchParams(window.location.search);
       const tokenParam = params.get('token');
       if (tokenParam) {
         setResetToken(tokenParam);
@@ -905,8 +941,6 @@ function App() {
         return;
       }
     }
-
-    if (path === '/verify') { setLoadingUser(false); return; }
 
     if (token) {
       fetch('/user/me', { headers: { 'Authorization': `Bearer ${token}` } })

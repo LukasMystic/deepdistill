@@ -4,6 +4,7 @@ import io
 import uuid
 import logging
 import asyncio
+import requests # Added for Brevo API
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -32,6 +33,7 @@ try:
     from passlib.context import CryptContext
     from jose import JWTError, jwt
     from email_validator import validate_email, EmailNotValidError
+    # We no longer strictly need fastapi_mail if using API, but keeping for compatibility
     from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 except ImportError:
     print("⚠️  Warning: Missing dependencies. Run: pip install -r backend/requirements.txt")
@@ -74,44 +76,11 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-# --- EMAIL CONFIGURATION (Updated for Brevo) ---
-# We use os.getenv to read from your .env file
-MAIL_USERNAME = os.getenv("MAIL_USERNAME")
-MAIL_PASSWORD = os.getenv("MAIL_PASSWORD") # Your Brevo Key (xsmtpsib-...)
-MAIL_FROM = os.getenv("MAIL_FROM", "noreply@deepdistill.app") # Default sender if not set
-MAIL_PORT = int(os.getenv("MAIL_PORT", 587))
-MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp-relay.brevo.com")
-
-mail_conf = None
-if MAIL_USERNAME and MAIL_PASSWORD and FastMail:
-    # --- DEBUGGING BLOCK: CHECK YOUR TERMINAL ON STARTUP ---
-    masked_key = f"{MAIL_PASSWORD[:5]}...{MAIL_PASSWORD[-3:]}" if MAIL_PASSWORD else "None"
-    print(f"\n📧 === EMAIL CONFIGURATION CHECK ===")
-    print(f"   SMTP Server: {MAIL_SERVER}:{MAIL_PORT}")
-    print(f"   SMTP Login:  {MAIL_USERNAME}")
-    print(f"   Sender Addr: {MAIL_FROM}")
-    print(f"   Key:         {masked_key}")
-    
-    # Specific Warning for Brevo Users
-    if "brevo.com" in MAIL_SERVER and "@gmail.com" in MAIL_USERNAME:
-        print(f"   ⚠️  WARNING: You are using a Gmail address ({MAIL_USERNAME}) as the Login for Brevo.")
-        print(f"               Brevo usually requires a specific SMTP Login (e.g., '9da...@smtp-brevo.com').")
-        print(f"               Check your Brevo Dashboard -> SMTP & API -> SMTP Settings.")
-    print(f"====================================\n")
-    
-    mail_conf = ConnectionConfig(
-        MAIL_USERNAME=MAIL_USERNAME,
-        MAIL_PASSWORD=MAIL_PASSWORD,
-        MAIL_FROM=MAIL_FROM,
-        MAIL_PORT=MAIL_PORT,
-        MAIL_SERVER=MAIL_SERVER,
-        MAIL_STARTTLS=True,  # Required for Brevo on 587
-        MAIL_SSL_TLS=False,  # Must be False for 587
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=True
-    )
-else:
-    print("\n⚠️  Email configuration missing or incomplete in .env. Emails will NOT send.\n")
+# --- EMAIL CONFIGURATION (BREVO API MODE) ---
+# For Hugging Face Spaces, we MUST use the HTTP API, not SMTP ports.
+MAIL_API_KEY = os.getenv("MAIL_PASSWORD") # Reuse the Brevo Key (xkeysib-...)
+MAIL_SENDER_EMAIL = os.getenv("MAIL_FROM", "noreply@deepdistill.app")
+MAIL_SENDER_NAME = "DeepDistill Admin"
 
 # --- MOCK DATABASE (In-Memory) ---
 MOCK_USERS: Dict[str, dict] = {} 
@@ -245,23 +214,38 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 
     return user
 
-async def send_email_async(message: MessageSchema):
-    """Safe wrapper for sending emails to prevent server crashes on auth failure"""
-    if not mail_conf or not FastMail:
-        print("⚠️ Email config missing, skipping email send.")
+async def send_email_via_api(subject: str, recipients: List[str], html_content: str):
+    """
+    Sends email using Brevo's HTTP API.
+    This works on Hugging Face Spaces where SMTP ports (25, 465, 587) are blocked.
+    """
+    if not MAIL_API_KEY:
+        print("⚠️ MAIL_PASSWORD (API Key) missing. Skipping email.")
         return
 
+    url = "https://api.brevo.com/v3/smtp/email"
+    headers = {
+        "accept": "application/json",
+        "api-key": MAIL_API_KEY,
+        "content-type": "application/json"
+    }
+    
+    # Brevo API Payload
+    payload = {
+        "sender": {"name": MAIL_SENDER_NAME, "email": MAIL_SENDER_EMAIL},
+        "to": [{"email": email} for email in recipients],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+
     try:
-        fm = FastMail(mail_conf)
-        await fm.send_message(message)
-        print(f"✅ Email sent successfully to {message.recipients}")
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code in [200, 201, 202]:
+            print(f"✅ Email sent via API to {recipients}")
+        else:
+            print(f"❌ Brevo API Error {response.status_code}: {response.text}")
     except Exception as e:
-        # Catch authentication errors specifically to give better hints
-        err_str = str(e)
-        print(f"❌ EMAIL ERROR: {err_str}")
-        if "535" in err_str or "Authentication failed" in err_str:
-            print("💡 FIX: Your API Key or Email in .env is incorrect.")
-            print("        Ensure MAIL_PASSWORD is your Brevo SMTP Key (xsmtp...), NOT your login password.")
+        print(f"❌ Email API Connection Error: {e}")
 
 # =============================================================================
 # 5. APP SETUP & AI MODELS
@@ -514,7 +498,7 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
         MOCK_USERS[user_data.email] = new_user
         user_response = UserResponse(**new_user)
 
-    # SEND EMAIL (SAFE WRAPPER)
+    # SEND EMAIL (API WRAPPER)
     try:
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
         verify_link = f"{frontend_url}/verify?token={verification_token}"
@@ -525,14 +509,12 @@ async def register(background_tasks: BackgroundTasks, user_data: UserRegister):
         <a href="{verify_link}" style="padding: 10px 20px; background-color: blue; color: white; text-decoration: none;">Verify Email</a>
         """
         
-        message = MessageSchema(
+        background_tasks.add_task(
+            send_email_via_api, 
             subject="Verify your DeepDistill Account",
             recipients=[user_data.email],
-            body=html,
-            subtype=MessageType.html
+            html_content=html
         )
-        # Use the safe wrapper instead of adding raw task
-        background_tasks.add_task(send_email_async, message)
     except Exception as e:
         print(f"❌ Email Prep Failed: {e}")
     
@@ -601,10 +583,13 @@ async def forgot_password(background_tasks: BackgroundTasks, email: str = Form(.
             frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
             reset_link = f"{frontend_url}/reset-password?token={reset_token}" 
             html = f"<p>Click here to reset your password: <a href='{reset_link}'>Reset Password</a></p>"
-            message = MessageSchema(subject="Reset Password", recipients=[email], body=html, subtype=MessageType.html)
             
-            # Use safe wrapper
-            background_tasks.add_task(send_email_async, message)
+            background_tasks.add_task(
+                send_email_via_api,
+                subject="Reset Password",
+                recipients=[email],
+                html_content=html
+            )
         except Exception as e:
             print(f"❌ Forgot Password Email Failed: {e}")
 
