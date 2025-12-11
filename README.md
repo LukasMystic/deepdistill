@@ -1,11 +1,8 @@
----
-title: Deepdistill
-emoji: 👁
-colorFrom: blue
-colorTo: blue
-sdk: docker
-pinned: false
-license: mit
----
+# 👁 Deepdistill
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+This project is deployed on Hugging Face Spaces.
+
+👉 **Live Demo:**
+[https://huggingface.co/spaces/bembeng123/deepdistill](https://huggingface.co/spaces/bembeng123/deepdistill)
+
+---
