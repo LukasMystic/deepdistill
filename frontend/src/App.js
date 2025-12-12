@@ -6,7 +6,7 @@ import {
   History, Settings, ChevronRight, TrendingUp, Cpu,
   LineChart as LineChartIcon, Users, GraduationCap,
   ArrowRight, Database, LogOut, User, Lock, Mail, Camera, ShieldAlert, Key, Menu, X, Github, FileText, MonitorPlay,
-  BrainCircuit, Layers, Clock, Award, MousePointerClick, Smartphone, ChevronDown, ListFilter
+  BrainCircuit, Layers, Clock, Award, MousePointerClick, Smartphone, ChevronDown, ListFilter, Download
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
@@ -159,6 +159,93 @@ const InputField = ({ icon: Icon, ...props }) => (
   </div>
 );
 
+// --- RESOURCE MODAL ---
+const ResourceModal = ({ resource, onClose }) => {
+  if (!resource) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
+      <div 
+        className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" 
+        onClick={onClose}
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] md:max-h-[90vh]"
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900 z-10">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            {resource.type === 'video' ? <MonitorPlay size={20} className="text-blue-500"/> : <FileText size={20} className="text-purple-500"/>}
+            {resource.title}
+          </h3>
+          <div className="flex items-center gap-2">
+            {/* Download Button for convenience */}
+            <a 
+              href={resource.src} 
+              download 
+              className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-blue-400 transition-colors"
+              title="Download"
+            >
+              <Download size={20} />
+            </a>
+            <button 
+              onClick={onClose}
+              className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"
+            >
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+        
+        {/* Modal Content */}
+        <div className="flex-1 bg-slate-950 overflow-auto relative flex items-center justify-center">
+          {resource.type === 'video' ? (
+            <video 
+              src={resource.src} 
+              controls 
+              className="w-full h-full object-contain max-h-[80vh] outline-none" 
+              autoPlay
+              playsInline
+            >
+              Your browser does not support the video tag.
+            </video>
+          ) : (
+            <div className="w-full h-full relative group">
+                <object 
+                  data={resource.src} 
+                  type="application/pdf" 
+                  className="w-full h-full min-h-[50vh] md:min-h-[70vh]"
+                >
+                  {/* Fallback for browsers that don't support object embedding (like many mobile browsers) */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-slate-900">
+                    <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6">
+                       <FileText size={40} className="text-slate-500" />
+                    </div>
+                    <h4 className="text-xl font-bold text-white mb-2">View Document</h4>
+                    <p className="text-slate-400 mb-6 max-w-sm">
+                      Your browser may not support embedding this PDF directly. You can download or view it externally.
+                    </p>
+                    <a 
+                      href={resource.src} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg hover:shadow-blue-500/20 flex items-center gap-2"
+                    >
+                      <Download size={20} /> Open PDF
+                    </a>
+                  </div>
+                </object>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- LANDING PAGE ---
 
 const LandingPage = ({ onLogin, onRegister }) => {
@@ -166,9 +253,21 @@ const LandingPage = ({ onLogin, onRegister }) => {
   const y1 = useTransform(scrollY, [0, 500], [0, 200]);
   const y2 = useTransform(scrollY, [0, 500], [0, -150]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeResource, setActiveResource] = useState(null);
 
   return (
     <div className="min-h-screen bg-slate-950 text-white overflow-x-hidden selection:bg-blue-500/30">
+      
+      {/* Resource Modal Render */}
+      <AnimatePresence>
+        {activeResource && (
+          <ResourceModal 
+            resource={activeResource} 
+            onClose={() => setActiveResource(null)} 
+          />
+        )}
+      </AnimatePresence>
+
       <nav className="fixed top-0 w-full z-50 bg-slate-950/80 backdrop-blur-md border-b border-slate-900">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -276,35 +375,37 @@ const LandingPage = ({ onLogin, onRegister }) => {
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Video Placeholder */}
+              {/* Video Card */}
               <motion.div 
                 initial={{ opacity: 0, x: -20 }} 
                 whileInView={{ opacity: 1, x: 0 }} 
                 viewport={{ once: true }}
-                className="w-full aspect-video bg-slate-900 rounded-3xl border border-slate-800 relative overflow-hidden group cursor-pointer hover:border-blue-500/50 transition-colors shadow-2xl"
+                onClick={() => setActiveResource({ type: 'video', src: '/presentation.mp4', title: 'Presentation Video' })}
+                className="w-full aspect-video bg-slate-900 rounded-3xl border border-slate-800 relative overflow-hidden group cursor-pointer hover:border-blue-500/50 transition-all shadow-2xl hover:shadow-blue-500/10"
               >
                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-tr from-slate-900 to-slate-800 group-hover:scale-105 transition-transform duration-700">
-                   <div className="w-16 h-16 bg-blue-600/20 rounded-full backdrop-blur-sm flex items-center justify-center mb-4 group-hover:bg-blue-600 transition-colors shadow-lg border border-blue-500/30">
+                   <div className="w-16 h-16 bg-blue-600/20 rounded-full backdrop-blur-sm flex items-center justify-center mb-4 group-hover:bg-blue-600 transition-colors shadow-lg border border-blue-500/30 group-hover:scale-110">
                       <MonitorPlay size={32} className="text-blue-400 group-hover:text-white fill-current ml-1 transition-colors" />
                    </div>
                    <span className="text-slate-300 font-bold text-lg group-hover:text-white transition-colors">Watch Presentation</span>
-                   <span className="text-slate-500 text-sm mt-1">Video Walkthrough</span>
+                   <span className="text-slate-500 text-sm mt-1">Video Walkthrough (MP4)</span>
                  </div>
               </motion.div>
 
-              {/* Slides Placeholder */}
+              {/* Slides Card */}
               <motion.div 
                 initial={{ opacity: 0, x: 20 }} 
                 whileInView={{ opacity: 1, x: 0 }} 
                 viewport={{ once: true }}
-                className="w-full aspect-video bg-slate-900 rounded-3xl border border-slate-800 relative overflow-hidden group cursor-pointer hover:border-purple-500/50 transition-colors shadow-2xl"
+                onClick={() => setActiveResource({ type: 'pdf', src: '/LaporanDL.pdf', title: 'Project PPT' })}
+                className="w-full aspect-video bg-slate-900 rounded-3xl border border-slate-800 relative overflow-hidden group cursor-pointer hover:border-purple-500/50 transition-all shadow-2xl hover:shadow-purple-500/10"
               >
                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-bl from-slate-900 to-slate-800 group-hover:scale-105 transition-transform duration-700">
-                   <div className="w-16 h-16 bg-purple-600/20 rounded-full backdrop-blur-sm flex items-center justify-center mb-4 group-hover:bg-purple-600 transition-colors shadow-lg border border-purple-500/30">
+                   <div className="w-16 h-16 bg-purple-600/20 rounded-full backdrop-blur-sm flex items-center justify-center mb-4 group-hover:bg-purple-600 transition-colors shadow-lg border border-purple-500/30 group-hover:scale-110">
                       <FileText size={32} className="text-purple-400 group-hover:text-white transition-colors" />
                    </div>
                    <span className="text-slate-300 font-bold text-lg group-hover:text-white transition-colors">View Deck</span>
-                   <span className="text-slate-500 text-sm mt-1">Interactive Slides</span>
+                   <span className="text-slate-500 text-sm mt-1">LaporanDL.pdf</span>
                  </div>
               </motion.div>
           </div>
